@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MovieMatch: Personalized Movie Recommendation Using User History (ES 335)</title>
+<meta name="description" content="ES 335 project: predicting whether a MovieLens user will rate a movie 4 or 5 stars from their earlier ratings, with a leakage-safe chronological evaluation.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎞️</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<!-- Paste the GitHub repository URL here (e.g. https://github.com/<user>/MovieMatch).
+     Every "Code" link on the page is built from it. -->
+<meta name="repo-url" content="https://github.com/Viraj-Solanki/ES-335-Project">
+</head>
+<body>
+<noscript><p class="noscript">This page needs JavaScript to draw its charts and the explorer. All results are also in <code>outputs/metrics.json</code> and the project report.</p></noscript>
+
+<!-- ========================================================= top nav -->
+<nav class="topnav" aria-label="Site navigation">
+  <div class="topnav-inner">
+    <a href="#" class="topnav-brand">🎞️ Movie<span>Match</span></a>
+    <div class="topnav-links">
+      <a href="#question">Question</a>
+      <a href="#data">Data</a>
+      <a href="#preprocessing">Preprocessing</a>
+      <a href="#methods">Methods</a>
+      <a href="#evaluation">Evaluation</a>
+      <a href="#results">Results</a>
+      <a href="#errors">Errors</a>
+      <a href="#limitations">Limitations</a>
+      <a href="#conclusion">Conclusion</a>
+      <a href="#reproduction">Reproduction</a>
+    </div>
+    <div class="topnav-repo">
+      <a data-repo="" class="repo-link">↗ Repository</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="hero-head">
+    <div>
+      <p class="hero-eyebrow">ES 335 · Machine Learning Project</p>
+      <h1 class="wordmark">MovieMatch</h1>
+      <div class="hero-meta">
+        <span class="hero-meta-pill"><b>Author</b> Solanki Viraj (24110348) · Individual Project</span>
+        <span class="hero-meta-pill"><b>Dataset</b> MovieLens 100K</span>
+        <span class="hero-meta-pill"><b>Generated</b> <span data-k="generated"></span></span>
+      </div>
+    </div>
+    <div>
+      <p class="hero-q">Can a user’s earlier MovieLens ratings predict whether they will rate a movie 4–5 stars, and does that beat simply recommending popular movies?</p>
+    </div>
+  </div>
+
+  <div class="explorer" id="explorer" aria-label="Recommendation explorer">
+    <div class="explorer-bar">
+      <h2>Recommendation explorer</h2>
+      <div class="chips" id="userChips" role="group" aria-label="Choose a sample user"></div>
+    </div>
+    <div class="explorer-body">
+      <div class="panel" id="profilePanel"></div>
+      <div class="panel" id="listPanel">
+        <div class="tabs" role="tablist" aria-label="Candidate movies">
+          <button class="tab" role="tab" id="tab-later" aria-selected="true" data-tab="later">Rated later</button>
+          <button class="tab" role="tab" id="tab-top" aria-selected="false" data-tab="top">Top picks vs. popular</button>
+        </div>
+        <div id="listBody" role="tabpanel"></div>
+      </div>
+      <div class="panel verdict" id="verdictPanel" aria-live="polite"></div>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+  <nav class="rail" aria-label="Report sections">
+    <ol>
+      <li><a href="#question">Project question</a></li>
+      <li><a href="#data">Data</a></li>
+      <li><a href="#preprocessing">Preprocessing</a></li>
+      <li><a href="#methods">Baseline and methods</a></li>
+      <li><a href="#evaluation">Evaluation</a></li>
+      <li><a href="#results">Results</a></li>
+      <li><a href="#errors">Errors</a></li>
+      <li><a href="#limitations">Limitations</a></li>
+      <li><a href="#conclusion">Conclusion</a></li>
+      <li><a href="#reproduction">Reproduction</a></li>
+    </ol>
+    <p class="repo"><a data-repo="" class="repo-link">Code repository</a><br>Results generated <span data-k="generated"></span></p>
+  </nav>
+
+  <main>
+    <!-- 1 ---------------------------------------------------------------- -->
+    <section id="question">
+      <h2>Project question</h2>
+      <div class="section-rule"></div>
+      <p class="lede">Given a user’s past movie ratings and a candidate movie, predict whether the user will give that movie a positive rating, then use the prediction to rank movies for recommendation.</p>
+      <div class="tbl-wrap"><table>
+        <tbody>
+          <tr><td>One row</td><td class="wrap" style="text-align:left">One user–movie interaction: a user rated a movie at a particular time.</td></tr>
+          <tr><td>Target</td><td class="wrap" style="text-align:left">1 if the rating is 4 or 5 stars, 0 if it is 1, 2 or 3 stars. Fixed before any model was trained.</td></tr>
+          <tr><td>Prediction time</td><td class="wrap" style="text-align:left">When a recommendation is generated, before the user has rated the candidate.</td></tr>
+          <tr><td>Allowed inputs</td><td class="wrap" style="text-align:left">The user’s earlier ratings, the candidate’s genres and release year, and movie statistics from the training period only.</td></tr>
+          <tr><td>Output</td><td class="wrap" style="text-align:left">A probability for each user–movie pair, and a ranked list of candidate movies.</td></tr>
+        </tbody>
+      </table></div>
+      <p>A rating of 1–3 is treated as “not positive” for this experiment. It does not prove the user disliked the movie. A movie the user never rated is <em>unknown</em> and is never used as a negative example. The model estimates recorded rating behaviour, not anyone’s actual feelings.</p>
+      <p><strong>In scope:</strong> rating-based prediction, genre features, user-history summaries, model comparison, offline evaluation and this static demonstration. <strong>Out of scope:</strong> real user accounts, live recommendations, scraping streaming services, and causal claims.</p>
+          <p class="repo-ref">Code and details: <a data-repo="README.md"><code>README.md</code></a>, <a data-repo="REPORT.md"><code>REPORT.md</code></a></p>
+    </section>
+
+    <!-- 2 ---------------------------------------------------------------- -->
+    <section id="data">
+      <h2>Data</h2>
+      <div class="section-rule"></div>
+      <p><a href="https://grouplens.org/datasets/movielens/100k/">MovieLens 100K</a> from GroupLens Research: <span class="num" data-k="dataset/n_ratings" data-f="int"></span> ratings by <span class="num" data-k="dataset/n_users" data-f="int"></span> users on <span class="num" data-k="dataset/n_movies_in_catalogue" data-f="int"></span> movies, collected between <span data-k="dataset/first_rating_utc" data-f="date"></span> and <span data-k="dataset/last_rating_utc" data-f="date"></span>. The archive was checked against the MD5 checksum GroupLens publishes, and the row counts match its README exactly.</p>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>File</th><th style="text-align:left">Used for</th></tr></thead>
+        <tbody>
+          <tr><td><code>u.data</code></td><td class="wrap" style="text-align:left">User ID, movie ID, rating (1–5), Unix timestamp. The main interaction table.</td></tr>
+          <tr><td><code>u.item</code></td><td class="wrap" style="text-align:left">Title, release date and 19 genre flags. Pipe-separated and Latin-1 encoded, although the README says tab-separated.</td></tr>
+          <tr><td><code>u.user</code></td><td class="wrap" style="text-align:left">Age, gender, occupation, zip code. <strong>Not used:</strong> demographic attributes are unnecessary for this question and sensitive.</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Access and responsible use</h3>
+      <p>The GroupLens licence allows research use but not redistribution, so the repository contains no MovieLens files and no row-level copy of the ratings. <code>src/load_data.py</code> downloads the archive from GroupLens and checks its checksum. This site shows aggregate results and a few examples identified only by the dataset’s anonymous user numbers. The demographic file is not used at all.</p>
+
+      <h3>Data-quality checks</h3>
+
+      <div class="stat-cards">
+        <div class="stat-card stat-card--accent">
+          <div class="stat-card__value"><span data-k="dataset/n_ratings" data-f="int"></span></div>
+          <div class="stat-card__label">Total ratings</div>
+        </div>
+        <div class="stat-card stat-card--blue">
+          <div class="stat-card__value"><span data-k="dataset/n_users" data-f="int"></span></div>
+          <div class="stat-card__label">Unique users</div>
+        </div>
+        <div class="stat-card stat-card--teal">
+          <div class="stat-card__value"><span data-k="dataset/n_movies_in_catalogue" data-f="int"></span></div>
+          <div class="stat-card__label">Movies in catalogue</div>
+        </div>
+        <div class="stat-card stat-card--amber">
+          <div class="stat-card__value"><span data-k="dataset/positive_rate" data-f="pct"></span></div>
+          <div class="stat-card__label">Positive ratings (4–5★)</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-card__value"><span data-k="dataset/sparsity" data-f="pct"></span></div>
+          <div class="stat-card__label">Rating matrix sparsity</div>
+        </div>
+      </div>
+      <div class="tbl-wrap"><table id="qualityTable"></table></div>
+      <p class="caption">Duplicate titles are separate movie IDs in the catalogue; they were kept as given.</p>
+
+      <div class="grid2 wide">
+        <div><div class="plate"><img src="assets/figures/eda_rating_distribution.png" alt="Bar chart of rating counts from 1 to 5 stars; 4 stars is the most common rating." loading="lazy"></div>
+        <p class="caption">The positive class (4–5 stars) is <span data-k="dataset/positive_rate" data-f="pct"></span> of all ratings, so always predicting “positive” is already right more than half the time.</p></div>
+        <div><div class="plate"><img src="assets/figures/eda_genre_positive_fraction.png" alt="Horizontal bars of positive-rating fraction by genre, with rating counts." loading="lazy"></div>
+        <p class="caption">Positive rates vary by genre; counts are shown so small genres are not over-read.</p></div>
+      </div>
+      <div class="plate wide"><img src="assets/figures/eda_ratings_per_user_movie.png" alt="Histogram of ratings per user and a long-tail curve of ratings per movie." loading="lazy"></div>
+      <p class="caption">Every user has at least <span data-k="dataset/ratings_per_user/min"></span> ratings (median <span data-k="dataset/ratings_per_user/median"></span>). Movies follow a long tail: the top 10% of movies receive <span data-k="dataset/top10pct_movies_share" data-f="pct0"></span> of ratings, and <span data-k="dataset/movies_with_lt_5_ratings" data-f="int"></span> movies have fewer than five. The rating matrix is <span data-k="dataset/sparsity" data-f="pct"></span> empty.</p>
+          <p class="repo-ref">Code and details: <a data-repo="src/load_data.py"><code>src/load_data.py</code></a>, <a data-repo="notebooks/01_data_exploration.ipynb"><code>notebooks/01_data_exploration.ipynb</code></a></p>
+    </section>
+
+    <!-- 3 ---------------------------------------------------------------- -->
+    <section id="preprocessing">
+      <h2>Preprocessing</h2>
+      <div class="section-rule"></div>
+      <ol class="prose">
+        <li>Load the files with column names from the README; join ratings to movies on movie ID (every ID matched).</li>
+        <li>Check types, missing values, duplicates, rating range and timestamps (table above).</li>
+        <li>Create the target: rating ≥ 4 → 1, rating ≤ 3 → 0.</li>
+        <li>Split by time <em>before</em> computing any feature or fitting anything.</li>
+        <li>Build user-history and movie features without using the row’s own rating or any later rating.</li>
+        <li>Fit the imputer, scaler and model inside a scikit-learn <code>Pipeline</code> on training rows only.</li>
+      </ol>
+
+      <h3>Chronological split</h3>
+      <p>Ratings are sorted by timestamp and cut at timestamps, not row positions, so no training rating is later than any validation rating even when several ratings share a second.</p>
+      <div class="split-steps" id="splitSteps"></div>
+      <div class="widget wide"><svg id="timelineChart" role="img" aria-label="Weekly rating counts over time, coloured by split"></svg></div>
+      <p class="caption">Weekly rating counts. Activity is bursty: users typically join, rate dozens of movies in one session, and leave.</p>
+
+      <h3>Features for one user–candidate pair</h3>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>Feature</th><th style="text-align:left">How it is built</th></tr></thead>
+        <tbody>
+          <tr><td>User history count</td><td class="wrap" style="text-align:left">log(1 + number of earlier ratings), plus a cold-start flag when it is zero.</td></tr>
+          <tr><td>User mean rating, positive rate</td><td class="wrap" style="text-align:left">From earlier ratings only, shrunk toward the training-period global value (5 pseudo-ratings).</td></tr>
+          <tr><td>User genre affinity</td><td class="wrap" style="text-align:left">For each of the candidate’s genres, the user’s earlier positive rate in that genre (shrunk toward the user’s overall rate, 3 pseudo-ratings), averaged. Also the affinity relative to the user’s base rate, and the share of the user’s history in those genres.</td></tr>
+          <tr><td>Movie mean rating, positive rate, count</td><td class="wrap" style="text-align:left">Training-period ratings of the candidate only, shrunk with 10 pseudo-ratings; cold-start flag for movies with none.</td></tr>
+          <tr><td>Candidate metadata</td><td class="wrap" style="text-align:left">19 genre indicators and release year (one missing year imputed with the training median).</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Key decisions and why</h3>
+      <div class="tbl-wrap"><table class="decisions">
+        <thead><tr><th>Decision</th><th style="text-align:left">Alternative considered</th><th style="text-align:left">Why this choice</th></tr></thead>
+        <tbody>
+          <tr><td>Positive = 4–5 stars</td><td class="wrap">Positive = 3–5, or predict the star value</td><td class="wrap">Matches the guide and gives a clear yes/no recommendation. 3 is ambiguous, so a sensitivity run drops it.</td></tr>
+          <tr><td>Split by time</td><td class="wrap">Random 80/10/10 split</td><td class="wrap">A random split lets the model learn from ratings made after the ones it predicts. Recommenders only ever predict forward.</td></tr>
+          <tr><td>Cut at timestamps</td><td class="wrap">Cut at row positions</td><td class="wrap">Many ratings share a second; cutting at a timestamp keeps every training rating earlier than every validation rating.</td></tr>
+          <tr><td>Strictly-earlier history for training rows</td><td class="wrap">One profile per user from all training data</td><td class="wrap">A single profile would include the row’s own rating. Shown below: that version looks better in training and is worse on validation.</td></tr>
+          <tr><td>Shrink averages toward the global rate</td><td class="wrap">Raw averages</td><td class="wrap">A movie with two 5-star ratings would otherwise outrank one with 200 ratings at 90% positive. Strengths (10, 5, 3 pseudo-ratings) were fixed before modelling, not tuned.</td></tr>
+          <tr><td>No demographics</td><td class="wrap">Use age, gender, occupation</td><td class="wrap">Not needed for the question, sensitive, and the guide advises against them.</td></tr>
+          <tr><td>PR-AUC as main metric</td><td class="wrap">Accuracy</td><td class="wrap">56% of ratings are positive, so accuracy rewards “always yes”. PR-AUC is threshold-free and focuses on the positive class.</td></tr>
+          <tr><td>Threshold that maximises validation F1</td><td class="wrap">Fixed 0.5</td><td class="wrap">Chosen without touching the test set; the slider in Results shows the trade-off.</td></tr>
+          <tr><td>Logistic Regression as final model</td><td class="wrap">Random Forest</td><td class="wrap">Equal accuracy, interpretable coefficients and calibrated probabilities.</td></tr>
+          <tr><td>Add a sequential protocol</td><td class="wrap">Report the fixed snapshot only</td><td class="wrap">86% of test rows have users with no training history, so the fixed snapshot alone cannot show whether personalisation helps users with history.</td></tr>
+        </tbody>
+      </table></div>
+
+      <h3>Leakage controls</h3>
+      <div class="callout">
+        <p><strong>Training rows</strong> see only ratings with a <em>strictly earlier</em> timestamp: the row’s own rating and anything rated in the same second are excluded. <strong>Validation and test rows</strong> use a snapshot of the training period frozen at the cutoff. Automated tests recompute 300 random rows of each kind with slow, obvious loops and confirm the vectorised features match.</p>
+      </div>
+      <ul>
+        <li>Split by time before fitting any learned preprocessing.</li>
+        <li>No candidate rating, future rating, or statistic derived from either is an input.</li>
+        <li>Smoothing priors and imputation values come from the training period only.</li>
+        <li>Hyperparameters and thresholds were chosen on validation; the test split was scored once by the final script.</li>
+        <li>All methods are scored on the same validation and test rows.</li>
+      </ul>
+          <p class="repo-ref">Code and details: <a data-repo="src/preprocessing.py"><code>src/preprocessing.py</code></a>, <a data-repo="src/features.py"><code>src/features.py</code></a>, <a data-repo="tests/test_leakage.py"><code>tests/test_leakage.py</code></a>, <a data-repo="notebooks/02_features_and_split.ipynb"><code>notebooks/02_features_and_split.ipynb</code></a></p>
+    </section>
+
+    <!-- 4 ---------------------------------------------------------------- -->
+    <section id="methods">
+      <h2>Baseline and methods</h2>
+      <div class="section-rule"></div>
+      <div class="tbl-wrap"><table>
+        <thead><tr><th>Method</th><th style="text-align:left">What it does</th><th style="text-align:left">Why</th></tr></thead>
+        <tbody>
+          <tr><td><span class="swatch" style="background:var(--maj)"></span>Majority baseline</td><td class="wrap" style="text-align:left">Predicts the most common training class (positive) for every pair.</td><td class="wrap" style="text-align:left">Exposes class imbalance; any useful model must beat it.</td></tr>
+          <tr><td><span class="swatch" style="background:var(--pop)"></span>Popularity baseline</td><td class="wrap" style="text-align:left">Scores each movie by its smoothed training-period positive-rating fraction. Every user gets the same order.</td><td class="wrap" style="text-align:left">The non-personalised recommender that personalisation has to beat.</td></tr>
+          <tr><td><span class="swatch" style="background:var(--lr)"></span>Logistic Regression</td><td class="wrap" style="text-align:left">Weighted sum of the standardised pair features passed through a sigmoid. C tuned on validation.</td><td class="wrap" style="text-align:left">Interpretable, fast, and gives calibrated probabilities. Primary model.</td></tr>
+          <tr><td><span class="swatch" style="background:var(--rf)"></span>Random Forest</td><td class="wrap" style="text-align:left">300 trees; minimum leaf size tuned on validation.</td><td class="wrap" style="text-align:left">Tests whether non-linear interactions help.</td></tr>
+          <tr><td><span class="swatch" style="background:var(--lrm)"></span>LR, movie features only</td><td class="wrap" style="text-align:left">Logistic Regression with every user feature removed.</td><td class="wrap" style="text-align:left">Ablation: isolates what the user-history features add.</td></tr>
+        </tbody>
+      </table></div>
+      <p>Genre preferences enter the model as features, so Logistic Regression acts as a personalised, content-based scorer. No separate similarity recommender was built.</p>
+          <p class="repo-ref">Code and details: <a data-repo="src/train.py"><code>src/train.py</code></a>, <a data-repo="outputs/models/"><code>outputs/models/</code></a></p>
+    </section>
+
+    <!-- 5 ---------------------------------------------------------------- -->
+    <section id="evaluation">
+      <h2>Evaluation</h2>
+      <div class="section-rule"></div>
+      <p>The <strong>primary protocol</strong> is the guide’s fixed snapshot: features for validation and test rows come only from the training period, answering “given what was known at the training cutoff, how well can later ratings be predicted?”</p>
+      <div class="callout teal">
+        <p>Under the fixed snapshot, <strong><span data-k="cold_start/fixed_snapshot/test/rows_user_cold" data-f="pct"></span> of test rows</strong> belong to users with no training-period ratings (<span data-k="cold_start/fixed_snapshot/test/users_cold"></span> of <span data-k="cold_start/fixed_snapshot/test/users_total"></span> test users). For those rows no personalisation is possible. So the report also runs the guide’s optional <strong>sequential protocol</strong>: when predicting a rating made at time <em>t</em>, every rating made before <em>t</em> is observable and nothing at or after <em>t</em> is. That leaves only <span data-k="cold_start/sequential/test/rows_user_cold" data-f="pct"></span> of test rows without user history. The same trained models are used; only thresholds are re-chosen on sequential validation data.</p>
+      </div>
+      <div class="plate" style="max-width:34rem"><img src="assets/figures/eda_cold_start_coverage.png" alt="Bar chart: share of validation and test rows with no user history under each protocol." loading="lazy"></div>
+
+      <h3>Metrics</h3>
+      <ul>
+        <li><strong>Precision</strong>: of the pairs predicted positive, the share that were positive.</li>
+        <li><strong>Recall</strong>: of the positive ratings, the share the model caught.</li>
+        <li><strong>F1</strong>: harmonic mean of precision and recall.</li>
+        <li><strong>PR-AUC</strong> (average precision): precision–recall quality across all thresholds. Threshold-free, so it is the main comparison metric and the tuning criterion.</li>
+        <li><strong>Accuracy</strong> and the <strong>confusion matrix</strong>, always read next to the <span data-k="test/Majority baseline/positive_rate" data-f="pct"></span> positive rate of the test set.</li>
+        <li><strong>Precision@k within each user</strong>: for users with at least 10 test ratings, rank the movies they rated and check how many of the top k were positive.</li>
+      </ul>
+      <h3>Tuning protocol</h3>
+      <p>Each model was fit on training rows for every value in a small grid and scored by validation PR-AUC. The classification threshold for each model is the one that maximises F1 on validation. Logistic Regression picked C = <span data-k="tuning/Logistic Regression/chosen_C"></span>; Random Forest picked a minimum leaf size of <span data-k="tuning/Random Forest/chosen_min_samples_leaf"></span>.</p>
+      <div class="plate" style="max-width:40rem"><img src="assets/figures/results_threshold_selection_val.png" alt="Precision, recall and F1 against threshold on validation, with the chosen threshold marked." loading="lazy"></div>
+          <p class="repo-ref">Code and details: <a data-repo="src/evaluate.py"><code>src/evaluate.py</code></a>, <a data-repo="src/run_pipeline.py"><code>src/run_pipeline.py</code></a></p>
+    </section>
+
+    <!-- 6 ---------------------------------------------------------------- -->
+    <section id="results">
+      <h2>Results</h2>
+      <div class="section-rule"></div>
+      <div class="widget wide">
+        <div class="widget-controls">
+          <span class="seg-label">Protocol</span>
+          <div class="seg" id="protoSeg" role="group" aria-label="Evaluation protocol">
+            <button data-v="fixed" aria-pressed="true">Fixed snapshot (primary)</button>
+            <button data-v="seq" aria-pressed="false">Sequential</button>
+          </div>
+          <span class="seg-label">Metric</span>
+          <div class="seg" id="metricSeg" role="group" aria-label="Metric"></div>
+        </div>
+        <svg id="metricChart" role="img" aria-label="Test-set metric by model"></svg>
+      </div>
+      <p class="caption">Test-set scores. Thresholds were chosen on validation data. Switch the protocol to compare.</p>
+      <div class="tbl-wrap wide"><table id="resultsTable"></table></div>
+
+      <h3>What the numbers say</h3>
+      <p><strong>Fixed snapshot (primary).</strong> Logistic Regression reaches PR-AUC <span data-k="test/Logistic Regression/pr_auc" data-f="f3"></span> against <span data-k="test/Popularity baseline/pr_auc" data-f="f3"></span> for the popularity baseline. A bootstrap over users puts the difference at <span data-k="bootstrap_pr_auc_diff/fixed_snapshot/LR - Popularity/diff" data-f="signed"></span> with a 95% interval of <span data-k="bootstrap_pr_auc_diff/fixed_snapshot/LR - Popularity/ci95" data-f="ci"></span>, so the two cannot be told apart. The movie-only ablation scores the same as full LR. At the validation-chosen thresholds, popularity actually has the slightly higher F1 (<span data-k="test/Popularity baseline/f1" data-f="f3"></span> vs <span data-k="test/Logistic Regression/f1" data-f="f3"></span>). Every trained model beats the majority baseline’s PR-AUC of <span data-k="test/Majority baseline/pr_auc" data-f="f3"></span>.</p>
+      <p><strong>Sequential.</strong> When earlier ratings are visible, Logistic Regression reaches PR-AUC <span data-k="sequential/test/Logistic Regression/pr_auc" data-f="f3"></span> against <span data-k="sequential/test/Popularity baseline/pr_auc" data-f="f3"></span> (difference <span data-k="bootstrap_pr_auc_diff/sequential/LR - Popularity/diff" data-f="signed"></span>, 95% interval <span data-k="bootstrap_pr_auc_diff/sequential/LR - Popularity/ci95" data-f="ci"></span>) and F1 <span data-k="sequential/test/Logistic Regression/f1" data-f="f3"></span> against <span data-k="sequential/test/Popularity baseline/f1" data-f="f3"></span>. The movie-only ablation stays at <span data-k="sequential/test/LR (movie features only)/pr_auc" data-f="f3"></span>, so the gain comes from the user features.</p>
+      <p><strong>Random Forest</strong> is not reliably better than Logistic Regression under either protocol (difference <span data-k="bootstrap_pr_auc_diff/fixed_snapshot/RF - LR/diff" data-f="signed"></span> fixed, <span data-k="bootstrap_pr_auc_diff/sequential/RF - LR/diff" data-f="signed"></span> sequential), so the simpler model is kept.</p>
+      <div class="tbl-wrap"><table id="bootTable"></table></div>
+      <p class="caption">Paired cluster bootstrap: users are resampled with replacement (1,000 draws) and PR-AUC differences are recomputed on fixed predictions.</p>
+
+      <h3>Precision–recall curves</h3>
+      <div class="widget wide">
+        <div class="widget-controls"><span class="seg-label">Show</span><div class="seg" id="prSeg" role="group" aria-label="Models on the curve"></div></div>
+        <svg id="prChart" role="img" aria-label="Precision-recall curves on the test set, fixed snapshot"></svg>
+      </div>
+      <p class="caption">Fixed snapshot, test set. The dotted line is the positive rate, which is what a random scorer would achieve.</p>
+
+      <h3>Move the threshold</h3>
+      <div class="widget wide">
+        <div class="slider-row">
+          <label for="thr" class="seg-label">Threshold</label>
+          <input type="range" id="thr" min="0.05" max="0.95" step="0.01" value="0.39">
+          <b class="num" id="thrVal"></b>
+        </div>
+        <div class="readouts" id="thrReadouts"></div>
+        <p class="note" style="margin-top:0.8rem">Logistic Regression on the test set (fixed snapshot). This is for exploration only: the reported threshold, <span data-k="thresholds/Logistic Regression" data-f="f3"></span>, was fixed on validation data before the test set was scored. Raising it trades recall for precision.</p>
+      </div>
+
+      <h3>Who benefits from personalisation</h3>
+      <div class="widget wide">
+        <div class="widget-controls">
+          <span class="seg-label">Protocol</span>
+          <div class="seg" id="groupSeg" role="group" aria-label="Protocol for subgroup chart">
+            <button data-v="fixed" aria-pressed="true">Fixed snapshot</button>
+            <button data-v="seq" aria-pressed="false">Sequential</button>
+          </div>
+        </div>
+        <svg id="groupChart" role="img" aria-label="PR-AUC by amount of user history"></svg>
+      </div>
+      <p class="caption">Test PR-AUC grouped by how many ratings the user had before the prediction. Row counts are under each group.</p>
+      <p>Under the fixed snapshot, users with 200 or more training ratings get PR-AUC <span data-k="test_by_user_history/3/Logistic Regression|pr_auc" data-f="f3"></span> from Logistic Regression against <span data-k="test_by_user_history/3/Popularity baseline|pr_auc" data-f="f3"></span> from popularity, but that group is only <span data-k="test_by_user_history/3/n" data-f="int"></span> of 10,000 test rows. For cold-start users the two are essentially the same, because without history the model can only use movie features. Across all <span data-k="test_warm_users_only/Logistic Regression/n" data-f="int"></span> rows from users with any training history, the movie-only model (<span data-k="test_warm_users_only/LR (movie features only)/pr_auc" data-f="f3"></span>) actually edges out full LR (<span data-k="test_warm_users_only/Logistic Regression/pr_auc" data-f="f3"></span>): a month-old profile is often not a good guide, and the gain is concentrated in heavy raters.</p>
+
+      <h3>Ranking within each user</h3>
+      <div class="tbl-wrap"><table id="rankTable"></table></div>
+      <p class="caption">For <span data-k="ranking_test/n_users"></span> test users with at least 10 test ratings, each user’s rated movies are ranked by score. A random order would give precision@5 of <span data-k="ranking_test/random_order/p@5" data-f="f3"></span>. Only rated movies have labels, so this ranks a candidate set the user chose to watch.</p>
+      <p>All methods put more positives at the top than random ordering. Within a single user, however, Logistic Regression does not beat popularity: under the sequential protocol popularity is slightly ahead at precision@5. The user features mainly shift a user’s overall level (harsh vs generous raters), which helps the pooled classification metrics but does little to reorder one user’s list. Genre affinity is the only per-movie user signal, and it is weak.</p>
+
+      <h3>Two more checks</h3>
+      <p><strong>Leakage demonstration (validation only).</strong> A Logistic Regression trained on naive features that include each training row’s own rating scores PR-AUC <span data-k="leakage_demo/leaky/train_pr_auc" data-f="f3"></span> on its own training data, which looks impressive, but only <span data-k="leakage_demo/leaky/val_pr_auc" data-f="f3"></span> on validation, below the correct pipeline’s <span data-k="leakage_demo/correct/val_pr_auc" data-f="f3"></span>. Leakage makes a model look better in development and perform worse on new data.</p>
+      <p><strong>Excluding 3-star ratings</strong> (1–2 vs 4–5, sensitivity analysis). Removing the ambiguous middle makes the task easier for everyone: Logistic Regression reaches PR-AUC <span data-k="sensitivity_exclude_3star/test/Logistic Regression/pr_auc" data-f="f3"></span> and popularity <span data-k="sensitivity_exclude_3star/test/Popularity baseline/pr_auc" data-f="f3"></span>, with a positive rate of <span data-k="sensitivity_exclude_3star/test/Majority baseline/positive_rate" data-f="pct"></span>. The ranking of methods does not change.</p>
+
+      <div class="grid2 wide">
+        <div><div class="plate"><img src="assets/figures/results_lr_coefficients.png" alt="Largest Logistic Regression coefficients; movie mean rating and movie positive rate are largest." loading="lazy"></div>
+        <p class="caption">Movie quality dominates; the user’s rating tendency and genre affinity come next. Coefficients are on standardised features and features are correlated, so read them as rough importance, not causes.</p></div>
+        <div><div class="plate"><img src="assets/figures/results_calibration.png" alt="Calibration curves close to the diagonal for all three models." loading="lazy"></div>
+        <p class="caption">Predicted probabilities track observed positive rates closely, so a score of 0.8 means roughly an 80% positive rate in this data.</p></div>
+      </div>
+          <p class="repo-ref">Code and details: <a data-repo="outputs/metrics.json"><code>outputs/metrics.json</code></a>, <a data-repo="outputs/test_metrics.csv"><code>outputs/test_metrics.csv</code></a>, <a data-repo="notebooks/03_model_evaluation.ipynb"><code>notebooks/03_model_evaluation.ipynb</code></a></p>
+    </section>
+
+    <!-- 7 ---------------------------------------------------------------- -->
+    <section id="errors">
+      <h2>Errors</h2>
+      <div class="section-rule"></div>
+      <div class="widget wide">
+        <div class="widget-controls">
+          <span class="seg-label">Model</span>
+          <div class="seg" id="cmSeg" role="group" aria-label="Model for confusion matrix"></div>
+        </div>
+        <div class="cm-row">
+          <div class="cm" id="cmGrid"></div>
+          <div class="cm-explain" id="cmExplain"></div>
+        </div>
+      </div>
+      <p class="caption">Test set, fixed snapshot, at each model’s validation-chosen threshold. Select a cell to see what that kind of error means here.</p>
+      <p>The thresholds that maximise F1 are low (about 0.4), so every model leans toward predicting “positive”: false positives far outnumber false negatives. Of Logistic Regression’s <span data-k="error_examples/fp_summary/n" data-f="int"></span> false positives, <span data-k="error_examples/fp_summary/share_rated_3" data-f="pct0"></span> were 3-star ratings, the borderline case. Of its <span data-k="error_examples/fn_summary/n" data-f="int"></span> false negatives, <span data-k="error_examples/fn_summary/share_rated_4" data-f="pct0"></span> were 4-star ratings.</p>
+
+      <h3>Representative mistakes</h3>
+      <p>The most confident errors of Logistic Regression on the test set, mixing users with and without history. User IDs are the dataset’s anonymous numbers.</p>
+      <div class="tbl-wrap wide"><table id="fpTable"></table></div>
+      <p class="caption">False positives: predicted positive, rated 1–3.</p>
+      <div class="tbl-wrap wide"><table id="fnTable"></table></div>
+      <p class="caption">False negatives: predicted not positive, rated 4–5.</p>
+      <p>The patterns are consistent with three explanations, though individual cases prove nothing. <strong>Popularity pull:</strong> acclaimed classics such as <em>Casablanca</em> get high scores for every user, and a cold-start user who gives them 3 stars becomes a false positive. <strong>Unpopular movies a user liked anyway:</strong> poorly rated movies get low scores, so the minority who enjoyed them are missed. <strong>Stale or unusual profiles:</strong> one false negative comes from a user with hundreds of ratings who is a harsh rater overall and is rating a movie with no training ratings, so every signal pointed down.</p>
+      <div class="tbl-wrap"><table id="genreErrTable"></table></div>
+      <p class="caption">Logistic Regression error rate by genre on the test set (genres with at least 30 test ratings). Movies have several genres, so rows overlap.</p>
+          <p class="repo-ref">Code and details: <a data-repo="outputs/test_predictions.csv"><code>outputs/test_predictions.csv</code></a>, <a data-repo="REPORT.md"><code>REPORT.md</code></a></p>
+    </section>
+
+    <!-- 8 ---------------------------------------------------------------- -->
+    <section id="limitations">
+      <h2>Limitations</h2>
+      <div class="section-rule"></div>
+      <ul>
+        <li><strong>Cold start dominates the primary protocol.</strong> Most test users joined after the training cutoff, so the fixed-snapshot result mostly measures cold-start performance.</li>
+        <li><strong>Observed-rating bias.</strong> Users chose what to watch and rate. The data says nothing about movies they skipped, and unrated movies are unknown, not negative.</li>
+        <li><strong>Old data.</strong> Ratings are from 1997–98 on a small catalogue; tastes and audiences differ today.</li>
+        <li><strong>Subjective label.</strong> The 4–5 threshold is a project definition; a 3 may be mildly positive for some users.</li>
+        <li><strong>Popularity bias.</strong> Movies with many ratings have reliable statistics and dominate both the scores and the recommendation lists.</li>
+        <li><strong>Simple features.</strong> Only genres and release year describe a movie. There is no collaborative signal such as similar users or latent factors, which would likely help within-user ranking.</li>
+        <li><strong>Ranking evaluation.</strong> Only movies a user actually rated can be scored, so precision@k measures ordering within a self-selected set.</li>
+        <li><strong>One split.</strong> Results come from one chronological split; the bootstrap intervals cover user sampling but not other time periods.</li>
+        <li><strong>Prediction is not causation.</strong> The model finds patterns in past ratings; it does not explain why anyone likes a movie.</li>
+      </ul>
+    </section>
+
+    <!-- 9 ---------------------------------------------------------------- -->
+    <section id="conclusion">
+      <h2>Conclusion</h2>
+      <div class="section-rule"></div>
+      <p>A user’s earlier ratings and a movie’s genres can predict a positive rating better than chance: every trained model clearly beats the majority baseline (test PR-AUC about <span data-k="test/Logistic Regression/pr_auc" data-f="f2"></span> vs <span data-k="test/Majority baseline/pr_auc" data-f="f2"></span>).</p>
+      <p>Whether personalisation beats popularity depends on whether the user has history. Under the guide’s fixed snapshot, most test users have none, and Logistic Regression is statistically indistinguishable from the popularity baseline. When earlier ratings are allowed to inform later predictions, Logistic Regression improves PR-AUC by about <span data-k="bootstrap_pr_auc_diff/sequential/LR - Popularity/diff" data-f="f2"></span> with an interval that excludes zero, and the movie-only ablation shows the improvement comes from the user features. The gain shows up in the pooled metrics rather than in reordering a single user’s list.</p>
+      <p>Logistic Regression is kept as the final model: it matches Random Forest, is well calibrated, and its coefficients can be explained. A collaborative-filtering signal is the most promising next step.</p>
+    </section>
+
+    <!-- 10 --------------------------------------------------------------- -->
+    <section id="reproduction">
+      <h2>Reproduction</h2>
+      <div class="section-rule"></div>
+      <p>Python trains and evaluates everything offline. This page only reads the exported results file, <code>data/results.js</code>; no model runs in the browser.</p>
+<pre>git clone <span class="repo-text">&lt;repository URL&gt;</span> MovieMatch &amp;&amp; cd MovieMatch
+python -m venv .venv &amp;&amp; source .venv/bin/activate
+pip install -r requirements.txt
+python -m src.load_data            # downloads ml-100k.zip from GroupLens, checks MD5
+python tests/test_leakage.py       # split and leakage tests
+python -m src.run_pipeline         # full experiment, about 3 minutes
+python -m src.make_report          # regenerates REPORT.md from the results
+jupyter notebook notebooks/        # 01 → 02 → 03</pre>
+      <div class="tbl-wrap"><table id="splitTable"></table></div>
+      <p class="caption">Exact split boundaries (UTC). Target rule: rating ≥ 4. Random seed <span data-k="config/random_seed">335</span>. SHA-256 fingerprint of the split assignment: <code class="hash" data-k="split/assignment_sha256"></code>. <code>src.run_pipeline</code> prints the same value if you reproduced it exactly.</p>
+      <h3>AI use</h3>
+      <p>Project by Solanki Viraj (24110348). AI assistance was used for drafting and debugging code, designing leakage checks, and assisting with documentation. The code was run end to end, verified independently, and every number on this page is read from the pipeline output.</p>
+      <h3>Credits</h3>
+      <p>Data: F. Maxwell Harper and Joseph A. Konstan. 2015. The MovieLens Datasets: History and Context. <em>ACM Transactions on Interactive Intelligent Systems</em> 5(4), Article 19. GroupLens Research, University of Minnesota. This project is not endorsed by the University of Minnesota or GroupLens. Raw data is not redistributed here. Built with pandas, NumPy, scikit-learn and Matplotlib. Fonts: Plus Jakarta Sans and Inter (Google Fonts).</p>
+    </section>
+  </main>
+</div>
+
+<footer><div>MovieMatch, ES 335. Static site for GitHub Pages; demonstration based on precomputed predictions from the trained model, not a live recommender.</div></footer>
+
+<script src="data/results.js"></script>
+<script src="script.js"></script>
+</body>
+</html>
